@@ -6,21 +6,26 @@
     <title>URI 亂碼轉換器</title>
     <style>
         body { font-family: "Microsoft JhengHei", sans-serif; padding: 20px; background: #f0f2f5; }
-        .container { display: flex; gap: 20px; height: 80vh; }
+        .container { display: flex; gap: 20px; }
         .box { flex: 1; display: flex; flex-direction: column; }
         textarea { flex: 1; padding: 15px; border: 1px solid #ccc; border-radius: 8px; font-family: monospace; font-size: 14px; resize: none; }
-        .controls { width: 120px; display: flex; flex-direction: column; justify-content: center; gap: 15px; align-items: center; }
+        .controls { width: 150px; display: flex; flex-direction: column; justify-content: center; gap: 20px; align-items: center; }
         button { padding: 12px 20px; cursor: pointer; background: #28a745; color: white; border: none; border-radius: 6px; font-size: 16px; width: 100%; transition: 0.3s; }
         button:hover { background: #218838; }
         label { font-weight: bold; margin-bottom: 8px; color: #333; }
+        .decode-btn { background:#ff9800; }
+        .decode-btn:hover { background:#e68900; }
+        .copy-btn { background:#007bff; }
+        .copy-btn:hover { background:#0069d9; }
     </style>
 </head>
 <body>
 
-    <h2>CMS URI亂碼產生器 V3</h2>
-    <p style="color:#666; font-size:14px;">功能：使用 URL 編碼技術，避開 CMS 的 Base64 限制</p>
+    <h2>CMS URI亂碼產生器 V3（含反向解碼）</h2>
+    <p style="color:#666; font-size:14px;">功能：URL 編碼 ⇆ 解碼，避開 CMS Base64 限制</p>
 
     <div class="container">
+        <!-- 左邊：原始 HTML -->
         <div class="box">
             <label>1. 貼上原本內容 (正常寫法)</label>
             <textarea id="inputHtml" placeholder="例如：
@@ -28,28 +33,31 @@
 <img src='https://.../img.jpg'>"></textarea>
         </div>
 
+        <!-- 中間：按鈕群 -->
         <div class="controls">
             <button onclick="encodeContent()">轉換亂碼 ➡</button>
+            <button class="decode-btn" onclick="decodeContent()">⬅ 反向解碼</button>
         </div>
 
+        <!-- 右邊：輸出 -->
         <div class="box">
-            <label>2. 複製代碼到網站 CMS</label>
-            <textarea id="outputHtml" placeholder="轉換後的代碼會出現在這裡..."></textarea>
-            <button onclick="copyResult()" style="background:#007bff; margin-top:10px;">複製代碼</button>
+            <label>2. 轉換結果</label>
+            <textarea id="outputHtml" placeholder="轉換後的代碼在這裡..."></textarea>
+
+            <button onclick="copyResult()" class="copy-btn" style="margin-top:10px;">複製代碼</button>
         </div>
     </div>
 
     <script>
+        // 正向：輸入原始 HTML → 輸出編碼後的 CMS 可用代碼
         function encodeContent() {
             const input = document.getElementById('inputHtml').value;
             if (!input.trim()) { alert("請輸入內容"); return; }
 
-            // 使用 URI 編碼，CMS 通常不會擋這個
             const encodedStr = encodeURIComponent(input);
 
             const finalOutput = `<!--大橘同仁專用區-->
 <input id="passwordInput" placeholder="同仁專用" type="password" />
-
 <div id="hiddenContent" style="display:none;"></div>
 
 <script id="secretData" type="text/plain">
@@ -59,6 +67,25 @@ ${encodedStr}
             document.getElementById('outputHtml').value = finalOutput;
         }
 
+        // 反向：取出編碼字串 → decodeURIComponent → 還原 HTML
+        function decodeContent() {
+            const input = document.getElementById('inputHtml').value.trim();
+            if (!input) { alert("請把亂碼貼到左邊再解碼"); return; }
+
+            try {
+                // 自動抓 <script> 裡面的內容
+                const extracted = input.replace(/[\s\S]*?<script[^>]*>([\s\S]*?)<\/script>[\s\S]*/i, "$1").trim();
+
+                const result = decodeURIComponent(extracted);
+                document.getElementById('outputHtml').value = result;
+
+            } catch (e) {
+                alert("解碼失敗，請確認貼入的是 encodeURIComponent 格式的亂碼");
+                console.error(e);
+            }
+        }
+
+        // 複製輸出內容
         function copyResult() {
             const output = document.getElementById('outputHtml');
             if (!output.value) return;
@@ -67,5 +94,6 @@ ${encodedStr}
             alert("代碼已複製！");
         }
     </script>
+
 </body>
 </html>
