@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CMS URI 亂碼轉換器 V5 (含標籤還原)</title>
+    <title>CMS URI 亂碼轉換器 V6 (含復原功能)</title>
     <style>
         :root {
             --primary-color: #28a745;
@@ -49,6 +49,7 @@
             border-bottom: none;
             border-radius: 8px 8px 0 0;
             flex-wrap: wrap;
+            align-items: center;
         }
 
         .tool-btn {
@@ -61,19 +62,23 @@
             border-radius: 4px;
             color: #333;
             transition: 0.2s;
-            width: auto; /* 覆蓋通用 button 樣式 */
+            width: auto;
         }
 
         .tool-btn:hover { background: #dcdcdc; }
-        .tool-btn.tag-h { color: #d63384; } /* 標題類顏色 */
-        .tool-btn.tag-p { color: #0d6efd; } /* 段落類顏色 */
+        .tool-btn:active { background: #bbb; }
+        .tool-btn.tag-h { color: #d63384; }
+        .tool-btn.tag-p { color: #0d6efd; }
 
-        /* 特殊按鈕樣式 */
         .tool-btn.btn-strip { color: #e65100; border-color: #ffb74d; }
         .tool-btn.btn-strip:hover { background: #ffe0b2; }
 
         .tool-btn.btn-clear { margin-left: auto; color: red; border-color: red; }
         .tool-btn.btn-clear:hover { background: #ffe6e6; }
+        
+        /* 歷史紀錄按鈕 (給手機版或不知道快捷鍵的人用) */
+        .tool-divider { border-left: 1px solid #bbb; height: 20px; margin: 0 5px; }
+        .tool-btn.btn-history { font-family: monospace; min-width: 25px; }
 
         textarea {
             flex: 1;
@@ -89,7 +94,6 @@
 
         textarea:focus { border-color: var(--secondary-color); }
 
-        /* 右邊的 textarea 沒有工具列，給它完整的圓角 */
         #outputHtml { border-radius: 8px; }
 
         .controls {
@@ -129,26 +133,17 @@
             display: block;
         }
 
-        /* RWD 響應式：手機版變垂直排列 */
         @media (max-width: 768px) {
-            .container {
-                flex-direction: column;
-                height: auto;
-            }
-            .controls {
-                width: 100%;
-                flex-direction: row;
-            }
-            textarea {
-                min-height: 300px;
-            }
+            .container { flex-direction: column; height: auto; }
+            .controls { width: 100%; flex-direction: row; }
+            textarea { min-height: 300px; }
         }
     </style>
 </head>
 <body>
 
-    <h2>CMS URI 亂碼產生器 V5（含標籤還原）</h2>
-    <p class="desc">功能：URL 編碼 ⇆ 解碼，內建 HTML 編輯工具與標籤清除功能。</p>
+    <h2>CMS URI 亂碼產生器 V6（含復原功能）</h2>
+    <p class="desc">功能：URL 編碼 ⇆ 解碼，內建 HTML 編輯工具。支援 Ctrl+Z 復原 / Ctrl+Y 重做。</p>
 
     <div class="container">
         
@@ -162,18 +157,22 @@
                 <button class="tool-btn tag-h" onclick="insertTag('h1')" title="大標題">H1</button>
                 <button class="tool-btn tag-h" onclick="insertTag('h2')" title="中標題">H2</button>
                 <button class="tool-btn tag-h" onclick="insertTag('h3')" title="小標題">H3</button>
-                <button class="tool-btn tag-h" onclick="insertTag('h4')" title="小小標題">H4</button>
                 <button class="tool-btn" onclick="insertTag('strong')" title="粗體" style="font-weight:900">B</button>
                 <button class="tool-btn" onclick="insertTag('span')" title="Span">span</button>
                 <button class="tool-btn" onclick="insertTag('br')" title="換行">&lt;br&gt;</button>
                 
-                <!-- 新增：還原標籤按鈕 -->
-                <button class="tool-btn btn-strip" onclick="stripTags()" title="移除 HTML 標籤，只保留文字">還原標籤</button>
+                <div class="tool-divider"></div>
+                
+                <button class="tool-btn btn-history" onclick="undo()" title="復原 (Ctrl+Z)">↶</button>
+                <button class="tool-btn btn-history" onclick="redo()" title="重做 (Ctrl+Y)">↷</button>
 
+                <div class="tool-divider"></div>
+
+                <button class="tool-btn btn-strip" onclick="stripTags()" title="移除 HTML 標籤，只保留文字">還原標籤</button>
                 <button class="tool-btn btn-clear" onclick="clearInput()">清空</button>
             </div>
 
-            <textarea id="inputHtml" placeholder="在此輸入文字...&#10;使用「還原標籤」可移除 &lt;h3&gt;...&lt;/h3&gt; 等代碼，變回純文字。"></textarea>
+            <textarea id="inputHtml" placeholder="在此輸入文字...&#10;您可以使用 Ctrl+Z 復原操作。"></textarea>
         </div>
 
         <!-- 中間：操作按鈕 -->
@@ -192,55 +191,118 @@
     </div>
 
     <script>
-        // --- 編輯器功能 ---
+        // --- 歷史紀錄 (Undo/Redo) 系統 ---
+        const maxHistory = 50; // 最大紀錄步數
+        let historyStack = [];
+        let historyIndex = -1;
+        let debounceTimer;
 
-        // 移除 HTML 標籤
-        function stripTags() {
+        // 初始化：頁面載入時記錄初始狀態
+        window.onload = function() {
+            saveState(true); 
+            setupHistoryListeners();
+        };
+
+        // 設置監聽器
+        function setupHistoryListeners() {
             const textarea = document.getElementById('inputHtml');
-            const start = textarea.selectionStart;
-            const end = textarea.selectionEnd;
-            const text = textarea.value;
-            // 正則表達式：移除所有 <...> 格式的內容
-            const regex = /(<([^>]+)>)/ig;
 
-            if (start !== end) {
-                // 情境A：如果有選取文字，只清除選取範圍內的標籤
-                const selectedText = text.substring(start, end);
-                const strippedText = selectedText.replace(regex, "");
-                
-                textarea.value = text.substring(0, start) + strippedText + text.substring(end);
-                
-                // 重新設定選取範圍，游標會停留在處理後的文字後方
-                textarea.selectionStart = start;
-                textarea.selectionEnd = start + strippedText.length;
-            } else {
-                // 情境B：如果沒有選取，詢問是否清除整篇
-                if(text.trim() === "") return; // 沒內容就不動作
+            // 監聽鍵盤輸入，延遲記錄 (避免打一個字存一次)
+            textarea.addEventListener('input', () => {
+                clearTimeout(debounceTimer);
+                debounceTimer = setTimeout(() => {
+                    saveState();
+                }, 500); // 停止打字 0.5 秒後存檔
+            });
 
-                if(confirm("您沒有選取任何文字。\n是否要移除內容中「所有的」HTML 標籤，只保留純文字？")) {
-                    textarea.value = text.replace(regex, "");
+            // 監聽快捷鍵
+            textarea.addEventListener('keydown', (e) => {
+                if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+                    if (e.key.toLowerCase() === 'z') {
+                        e.preventDefault();
+                        if (e.shiftKey) {
+                            redo(); // Ctrl+Shift+Z
+                        } else {
+                            undo(); // Ctrl+Z
+                        }
+                    } else if (e.key.toLowerCase() === 'y') {
+                        e.preventDefault();
+                        redo(); // Ctrl+Y
+                    }
                 }
-            }
-            textarea.focus();
+            });
         }
 
-        // 在游標處插入標籤 或 包裹選取的文字
+        // 儲存狀態
+        function saveState(force = false) {
+            const textarea = document.getElementById('inputHtml');
+            const value = textarea.value;
+            const start = textarea.selectionStart;
+            const end = textarea.selectionEnd;
+
+            // 如果不是強制儲存，且內容跟上一次一樣，就不重複存
+            if (!force && historyStack.length > 0 && historyIndex >= 0) {
+                if (historyStack[historyIndex].value === value) return;
+            }
+
+            // 如果在中間步驟做了新操作，刪除後面的紀錄 (開創新時間線)
+            if (historyIndex < historyStack.length - 1) {
+                historyStack = historyStack.slice(0, historyIndex + 1);
+            }
+
+            historyStack.push({ value, start, end });
+            
+            // 限制堆疊大小
+            if (historyStack.length > maxHistory) {
+                historyStack.shift();
+            } else {
+                historyIndex++;
+            }
+        }
+
+        function undo() {
+            if (historyIndex > 0) {
+                historyIndex--;
+                restoreState();
+            }
+        }
+
+        function redo() {
+            if (historyIndex < historyStack.length - 1) {
+                historyIndex++;
+                restoreState();
+            }
+        }
+
+        function restoreState() {
+            const textarea = document.getElementById('inputHtml');
+            const state = historyStack[historyIndex];
+            if (state) {
+                textarea.value = state.value;
+                textarea.selectionStart = state.start;
+                textarea.selectionEnd = state.end;
+                textarea.focus();
+            }
+        }
+
+
+        // --- 編輯器功能 (已整合歷史紀錄) ---
+
         function insertTag(tagName) {
+            saveState(); // 操作前先存檔(確保上一個狀態被記錄)
+            
             const textarea = document.getElementById('inputHtml');
             const start = textarea.selectionStart;
             const end = textarea.selectionEnd;
             const text = textarea.value;
             const selectedText = text.substring(start, end);
-
             let newText = '';
 
             if (tagName === 'br') {
-                // 單閉合標籤
                 newText = '<br>';
                 textarea.value = text.substring(0, start) + newText + text.substring(end);
                 textarea.selectionStart = textarea.selectionEnd = start + newText.length;
             } else {
-                // 成對標籤
                 newText = `<${tagName}>${selectedText}</${tagName}>`;
                 textarea.value = text.substring(0, start) + newText + text.substring(end);
                 
@@ -254,48 +316,81 @@
             }
             
             textarea.focus();
+            saveState(true); // 操作後強制存檔
+        }
+
+        function stripTags() {
+            const textarea = document.getElementById('inputHtml');
+            const start = textarea.selectionStart;
+            const end = textarea.selectionEnd;
+            const text = textarea.value;
+            const regex = /(<([^>]+)>)/ig;
+
+            // 檢查是否有動作需要執行
+            if (start === end && text.trim() === "") return;
+
+            // 操作前先存檔
+            saveState();
+
+            let changed = false;
+
+            if (start !== end) {
+                // 情境A：清除選取範圍
+                const selectedText = text.substring(start, end);
+                const strippedText = selectedText.replace(regex, "");
+                textarea.value = text.substring(0, start) + strippedText + text.substring(end);
+                textarea.selectionStart = start;
+                textarea.selectionEnd = start + strippedText.length;
+                changed = true;
+            } else {
+                // 情境B：清除全部 (需確認)
+                if(confirm("您沒有選取任何文字。\n是否要移除內容中「所有的」HTML 標籤，只保留純文字？")) {
+                    textarea.value = text.replace(regex, "");
+                    changed = true;
+                }
+            }
+
+            textarea.focus();
+            if (changed) saveState(true); // 只有真的有變更才存檔
         }
 
         function clearInput() {
             if(confirm('確定要清空輸入框嗎？')) {
+                saveState(); // 清空前存檔
                 document.getElementById('inputHtml').value = '';
+                saveState(true); // 清空後存檔
             }
         }
 
 
-        // --- 編碼與解碼邏輯 (保留原功能) ---
+        // --- 編碼與解碼邏輯 ---
 
         function encodeContent() {
             const input = document.getElementById('inputHtml').value;
             if (!input.trim()) { alert("請輸入內容"); return; }
-
             const encodedStr = encodeURIComponent(input);
             const finalOutput = `<!--大橘同仁專用區--><input id="passwordInput" placeholder="同仁專用" type="password" /><div id="hiddenContent" style="display:none;"></div>\n<script id="secretData" type="text/plain">${encodedStr}<\/script>`;
-            
             document.getElementById('outputHtml').value = finalOutput;
         }
 
         function decodeContent() {
             const input = document.getElementById('inputHtml').value.trim();
             if (!input) { alert("請把亂碼貼到左邊輸入框再點擊解碼"); return; }
-
             try {
                 let extracted = input;
                 const match = input.match(/<script[^>]*>([\s\S]*?)<\/script>/i);
-                
-                if (match && match[1]) {
-                    extracted = match[1].trim();
-                }
+                if (match && match[1]) extracted = match[1].trim();
                 if(!extracted) extracted = input;
 
                 const result = decodeURIComponent(extracted);
                 document.getElementById('outputHtml').value = result;
 
-                if(confirm("解碼成功！要將解碼後的內容直接填入左側編輯框以便修改嗎？")) {
+                if(confirm("解碼成功！要將解碼後的內容直接填入左側編輯框以便修改嗎？\n(這將會覆蓋目前的內容，但可以透過 Ctrl+Z 復原)")) {
+                    saveState(); // 覆蓋前存檔
                     document.getElementById('inputHtml').value = result;
                     document.getElementById('outputHtml').value = ""; 
+                    saveState(true); // 覆蓋後存檔
                 }
-
             } catch (e) {
                 alert("解碼失敗，請確認貼入的是正確的格式");
                 console.error(e);
